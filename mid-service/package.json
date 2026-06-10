@@ -1,0 +1,19 @@
+{
+  "name": "mid-service",
+  "version": "1.0.0",
+  "description": "MID Backend - Módulo de Integración de Datos (Data Integration Service)",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": ["dewcore", "mid", "data-integration", "websocket"],
+  "author": "DewCore Engineering",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5"
+  }
+}

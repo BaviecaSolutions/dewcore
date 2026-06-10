@@ -1,0 +1,503 @@
+import { useState, useEffect, useCallback } from "react";
+import logo from "./assets/logo.png";
+
+// =========================================================================
+// MLT ENGINE — Port of Python psychrometric formulas to JavaScript
+// =========================================================================
+
+const MAGNUS_A = 17.625;
+const MAGNUS_B = 243.04;
+const Q_LATENTE_KCAL_L = 540.0;
+const KCAL_A_WH = 1.163;
+const RV = 461.5;
+const DELTA_RESISTENCIA_TERMICA = 1.0;
+
+function presionSaturacion(tempC) {
+  return 6.1078 * Math.exp((MAGNUS_A * tempC) / (MAGNUS_B + tempC));
+}
+
+function puntoRocio(tempC, hrPct) {
+  const hrFrac = hrPct / 100.0;
+  const gamma = Math.log(hrFrac) + (MAGNUS_A * tempC) / (MAGNUS_B + tempC);
+  return (MAGNUS_B * gamma) / (MAGNUS_A - gamma);
+}
+
+function humedadAbsoluta(tempC, hrPct, presionHpa) {
+  const tKelvin = tempC + 273.15;
+  const es = presionSaturacion(tempC);
+  const pv = es * (hrPct / 100.0);
+  return (pv * 100.0) / (RV * tKelvin) * 1000.0;
+}
+
+function aguaCondensable(tempAire, hr, presion, tempCond) {
+  const haEntrada = humedadAbsoluta(tempAire, hr, presion);
+  const haSalida = humedadAbsoluta(tempCond, 100.0, presion);
+  return Math.max(0, haEntrada - haSalida);
+}
+
+function calcularMLT(params) {
+  const tempCond = params.tempCondensadorMedida ?? (params.tempAguaFria + DELTA_RESISTENCIA_TERMICA);
+  const td = puntoRocio(params.tempAire, params.hr);
+  const ha = humedadAbsoluta(params.tempAire, params.hr, params.presion);
+  const condensableGm3 = aguaCondensable(params.tempAire, params.hr, params.presion, tempCond);
+  const litrosPorM3 = condensableGm3 / 1000.0;
+
+  const produccionLph = params.caudalAireM3h ? litrosPorM3 * params.caudalAireM3h : null;
+
+  const energiaConsumida = params.potenciaBomba * params.periodoHoras;
+  const litrosProducidos = params.caudalAguaDulceLpm * 60 * params.periodoHoras;
+  const energiaAhorrada = Q_LATENTE_KCAL_L * litrosProducidos * KCAL_A_WH;
+  const ratioEficiencia = energiaConsumida > 0 ? energiaAhorrada / energiaConsumida : Infinity;
+
+  const deltaTerm = Math.abs(params.tempAguaFria - params.tempAguaRetorno);
+  const margenOp = td - params.tempAguaFria;
+
+  let extraccionEmpirica = null;
+  let pctAcierto = null;
+  if (params.tempAireSalida != null && params.hrSalida != null) {
+    const haEnt = humedadAbsoluta(params.tempAire, params.hr, params.presion);
+    const haSal = humedadAbsoluta(params.tempAireSalida, params.hrSalida, params.presion);
+    extraccionEmpirica = Math.max(0, haEnt - haSal);
+    if (condensableGm3 > 0) pctAcierto = (extraccionEmpirica / condensableGm3) * 100;
+  }
+
+  return {
+    tempCondensador: tempCond,
+    condMedida: params.tempCondensadorMedida != null,
+    puntoRocio: td,
+    humedadAbsoluta: ha,
+    condensableGm3,
+    litrosPorM3,
+    produccionLph,
+    deltaEnfriamiento: params.tempAire - td,
+    energiaConsumida,
+    energiaAhorrada,
+    litrosProducidos,
+    ratioEficiencia,
+    flagRentable: energiaConsumida < energiaAhorrada,
+    deltaTermico: deltaTerm,
+    flagHuellaNula: deltaTerm <= 0.5,
+    flagEfluentes: true,
+    margenOperabilidad: margenOp,
+    flagOperable: td > params.tempAguaFria,
+    extraccionEmpirica,
+    pctAcierto,
+  };
+}
+
+// =========================================================================
+// SIMULATED DATA GENERATOR
+// Marks: 🔴 = Requiere prototipo (dato simulado temporal)
+//        🟢 = Dato real accesible (AEMET, Copernicus, etc.)
+//        ⚙️ = Parámetro de diseño del PT1
+// =========================================================================
+
+function generarDatosSimulados(hora) {
+  const t = hora / 24;
+  const tempAire = 22 + 6 * Math.sin(Math.PI * (t - 0.25));
+  const hr = 75 + 15 * Math.cos(Math.PI * (t - 0.1));
+  const viento = 2.5 + 2 * Math.sin(Math.PI * t * 2);
+  return {
+    tempAire: Math.round(tempAire * 10) / 10,
+    hr: Math.min(98, Math.max(45, Math.round(hr * 10) / 10)),
+    presion: 1013 + Math.round(Math.sin(t * Math.PI) * 3),
+    viento: Math.round(viento * 10) / 10,
+    tempAguaFria: 13.0 + Math.sin(t * Math.PI * 0.5) * 0.3,
+    tempAguaRetorno: 13.4 + Math.sin(t * Math.PI * 0.5) * 0.3,
+    caudalAguaFria: 10.0,
+    caudalAguaDulce: 0.03 + 0.04 * Math.max(0, Math.sin(Math.PI * (t - 0.2))),
+    potenciaBomba: 145 + 10 * Math.sin(t * Math.PI),
+    tempAireSalida: 14.2 + Math.sin(t * Math.PI * 0.5) * 0.5,
+    hrSalida: 99.5 + Math.random() * 0.5,
+  };
+}
+
+// =========================================================================
+// UI COMPONENTS
+// =========================================================================
+
+const COLORS = {
+  bg: "#ffffff",
+  card: "#ffffff",
+  cardBorder: "#e5e7eb",
+  accent: "#06b6d4",
+  accentDim: "#0e7490",
+  green: "#10b981",
+  greenDim: "#d1fae5",
+  red: "#ef4444",
+  redDim: "#fee2e2",
+  amber: "#f59e0b",
+  amberDim: "#fef3c7",
+  text: "#1f2937",
+  textDim: "#4b5563",
+  textMuted: "#6b7280",
+  simulated: "#f59e0b",
+  real: "#10b981",
+  design: "#8b5cf6",
+};
+
+const DataTag = ({ type }) => {
+  const config = {
+    sim: { icon: "🔴", label: "PROTOTIPO", color: COLORS.simulated, bg: COLORS.amberDim },
+    real: { icon: "🟢", label: "REAL", color: COLORS.real, bg: COLORS.greenDim },
+    design: { icon: "⚙️", label: "DISEÑO PT1", color: COLORS.design, bg: "#ede9fe" },
+  };
+  const c = config[type];
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 3,
+      fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+      padding: "2px 6px", borderRadius: 0,
+      background: c.bg, color: c.color, border: `1px solid ${c.color}40`,
+    }}>
+      {c.icon} {c.label}
+    </span>
+  );
+};
+
+const FlagIndicator = ({ active, label }) => (
+  <div style={{
+    display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
+  }}>
+    <div style={{
+      width: 10, height: 10, borderRadius: "50%",
+      background: active ? COLORS.green : COLORS.red,
+      boxShadow: active ? `0 0 8px ${COLORS.green}80` : `0 0 8px ${COLORS.red}80`,
+    }} />
+    <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
+    <span style={{
+      fontSize: 11, fontWeight: 600, marginLeft: "auto",
+      color: active ? COLORS.green : COLORS.red,
+    }}>
+      {active ? "TRUE" : "FALSE"}
+    </span>
+  </div>
+);
+
+const MetricRow = ({ label, value, unit, tag, highlight }) => (
+  <div style={{
+    display: "flex", alignItems: "baseline", justifyContent: "space-between",
+    padding: "5px 0", borderBottom: `1px solid ${COLORS.cardBorder}`,
+  }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+      <span style={{ fontSize: 12, color: COLORS.textDim }}>{label}</span>
+      {tag && <DataTag type={tag} />}
+    </div>
+    <div style={{ textAlign: "right" }}>
+      <span style={{
+        fontSize: 15, fontWeight: 600,
+        color: highlight ? COLORS.accent : COLORS.text,
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      }}>
+        {typeof value === "number" ? value.toFixed(2) : value}
+      </span>
+      {unit && <span style={{ fontSize: 11, color: COLORS.textMuted, marginLeft: 4 }}>{unit}</span>}
+    </div>
+  </div>
+);
+
+const SectionCard = ({ title, subtitle, children, accentColor }) => (
+  <div style={{
+    background: COLORS.card,
+    border: `1px solid ${COLORS.cardBorder}`,
+    borderTop: `3px solid ${accentColor || COLORS.accent}`,
+    borderRadius: 0, padding: 16,
+    display: "flex", flexDirection: "column", gap: 2,
+    boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
+  }}>
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: accentColor || COLORS.accent, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        {title}
+      </div>
+      {subtitle && <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>{subtitle}</div>}
+    </div>
+    {children}
+  </div>
+);
+
+const MiniBar = ({ value, max, color }) => (
+  <div style={{ width: "100%", height: 6, background: `${color}20`, borderRadius: 0, overflow: "hidden" }}>
+    <div style={{
+      width: `${Math.min(100, (value / max) * 100)}%`,
+      height: "100%", background: color, borderRadius: 0,
+      transition: "width 0.5s ease",
+    }} />
+  </div>
+);
+
+// =========================================================================
+// MAIN DASHBOARD
+// =========================================================================
+
+export default function MLTDashboard() {
+  const [hora, setHora] = useState(12);
+  const [playing, setPlaying] = useState(false);
+  const [history, setHistory] = useState([]);
+
+  const datos = generarDatosSimulados(hora);
+  const params = {
+    tempAire: datos.tempAire,
+    hr: datos.hr,
+    presion: datos.presion,
+    tempAguaFria: datos.tempAguaFria,
+    tempAguaRetorno: datos.tempAguaRetorno,
+    caudalAguaDulceLpm: datos.caudalAguaDulce,
+    potenciaBomba: datos.potenciaBomba,
+    periodoHoras: 1,
+    caudalAireM3h: 100,
+    tempCondensadorMedida: null,
+    tempAireSalida: datos.tempAireSalida,
+    hrSalida: datos.hrSalida,
+  };
+  const r = calcularMLT(params);
+
+  useEffect(() => {
+    if (!playing) return;
+    const iv = setInterval(() => {
+      setHora((h) => {
+        const next = h + 0.5;
+        return next > 24 ? 0 : next;
+      });
+    }, 600);
+    return () => clearInterval(iv);
+  }, [playing]);
+
+  useEffect(() => {
+    setHistory((prev) => {
+      const entry = { hora, td: r.puntoRocio, prod: r.produccionLph, ratio: r.ratioEficiencia, condensable: r.condensableGm3 };
+      const next = [...prev, entry];
+      return next.length > 48 ? next.slice(-48) : next;
+    });
+  }, [hora]);
+
+  const allFlags = r.flagRentable && r.flagHuellaNula && r.flagEfluentes && r.flagOperable;
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: COLORS.bg, color: COLORS.text,
+      fontFamily: "'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif",
+      padding: 16,
+    }}>
+      {/* Header */}
+      <div style={{ marginBottom: 20, borderBottom: `1px solid ${COLORS.cardBorder}`, paddingBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <img src={logo} alt="DewCore Logo" style={{ height: 50, width: "auto" }} />
+            <div>
+              <h1 style={{ fontSize: 18, fontWeight: 600, margin: 0, letterSpacing: "-0.02em", color: COLORS.accent }}>
+                MLT — Módulo Lógico-Termodinámico
+              </h1>
+              <p style={{ fontSize: 11, color: COLORS.textMuted, margin: "4px 0 0 0" }}>
+                Validación Empírica del Condensador Atmosférico · Patente ES-3046193-A1
+              </p>
+            </div>
+          </div>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "6px 12px",
+            borderRadius: 0, background: allFlags ? COLORS.greenDim : COLORS.redDim,
+            border: `1px solid ${allFlags ? COLORS.green : COLORS.red}40`,
+          }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: allFlags ? COLORS.green : COLORS.red,
+              boxShadow: `0 0 10px ${allFlags ? COLORS.green : COLORS.red}`,
+              animation: "pulse 2s infinite",
+            }} />
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em" }}>
+              {allFlags ? "SISTEMA OPERATIVO" : "FLAG INACTIVO"}
+            </span>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+          <DataTag type="sim" />
+          <span style={{ fontSize: 10, color: COLORS.textMuted }}>Dato que requiere el prototipo (simulado temporalmente)</span>
+          <DataTag type="real" />
+          <span style={{ fontSize: 10, color: COLORS.textMuted }}>Accesible ahora (AEMET, Copernicus)</span>
+          <DataTag type="design" />
+          <span style={{ fontSize: 10, color: COLORS.textMuted }}>Depende del diseño del PT1</span>
+        </div>
+      </div>
+
+      {/* Time control */}
+      <div style={{
+        background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 0,
+        padding: "10px 16px", marginBottom: 16,
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
+      }}>
+        <span style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600 }}>SIMULACIÓN TEMPORAL</span>
+        <button onClick={() => setPlaying(!playing)} style={{
+          background: playing ? COLORS.redDim : COLORS.accentDim,
+          border: `1px solid ${playing ? COLORS.red : COLORS.accent}50`,
+          color: COLORS.text, borderRadius: 0, padding: "4px 12px",
+          fontSize: 11, fontWeight: 600, cursor: "pointer",
+        }}>
+          {playing ? "⏸ Pausar" : "▶ Simular 24h"}
+        </button>
+        <input type="range" min={0} max={24} step={0.5} value={hora}
+          onChange={(e) => setHora(parseFloat(e.target.value))}
+          style={{ flex: 1, minWidth: 120, accentColor: COLORS.accent }}
+        />
+        <span style={{
+          fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: COLORS.accent,
+          minWidth: 50,
+        }}>
+          {String(Math.floor(hora)).padStart(2, "0")}:{String(Math.round((hora % 1) * 60)).padStart(2, "0")}h
+        </span>
+      </div>
+
+      {/* Main grid */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+        gap: 12,
+      }}>
+        {/* F14 - Modelo Termodinámico */}
+        <SectionCard title="F14 · Modelo Termodinámico" subtitle="Automatización del cálculo psicrométrico" accentColor={COLORS.accent}>
+          <MetricRow label="T aire entrada" value={datos.tempAire} unit="°C" tag="real" />
+          <MetricRow label="Humedad relativa" value={datos.hr} unit="%" tag="real" />
+          <MetricRow label="Presión atmosférica" value={datos.presion} unit="hPa" tag="real" />
+          <MetricRow label="Velocidad viento" value={datos.viento} unit="m/s" tag="real" />
+          <MetricRow label="T agua profunda" value={datos.tempAguaFria.toFixed(1)} unit="°C" tag="sim" />
+          <div style={{ height: 8 }} />
+          <MetricRow label="Punto de rocío" value={r.puntoRocio} unit="°C" highlight />
+          <MetricRow label="Humedad absoluta" value={r.humedadAbsoluta} unit="g/m³" />
+          <MetricRow label="Agua condensable" value={r.condensableGm3} unit="g/m³" highlight />
+          <MetricRow label="T condensador" value={r.tempCondensador} unit={`°C (${r.condMedida ? "MEDIDA" : "EST."})`} tag={r.condMedida ? "sim" : "design"} />
+          <MetricRow label="Δ enfriamiento" value={r.deltaEnfriamiento} unit="°C" />
+          {r.produccionLph != null && (
+            <>
+              <MetricRow label="Producción teórica" value={r.produccionLph} unit="l/h" tag="design" highlight />
+              <MetricRow label="Producción diaria" value={r.produccionLph * 24} unit="l/día" tag="design" />
+            </>
+          )}
+        </SectionCard>
+
+        {/* F17 - Validación empírica */}
+        <SectionCard title="F17 · Contraste Teórico vs Empírico" subtitle="Medición diferencial entrada/salida del aire" accentColor="#a78bfa">
+          <MetricRow label="T aire salida" value={datos.tempAireSalida} unit="°C" tag="sim" />
+          <MetricRow label="HR aire salida" value={datos.hrSalida.toFixed(1)} unit="%" tag="sim" />
+          <div style={{ height: 8 }} />
+          <MetricRow label="Vapor teórico" value={r.condensableGm3} unit="g/m³" />
+          <MetricRow label="Vapor empírico" value={r.extraccionEmpirica ?? "—"} unit={r.extraccionEmpirica != null ? "g/m³" : ""} tag="sim" />
+          {r.pctAcierto != null && (
+            <>
+              <MetricRow label="% acierto modelo" value={r.pctAcierto} unit="%" highlight />
+              <MiniBar value={r.pctAcierto} max={100} color={r.pctAcierto > 80 ? COLORS.green : COLORS.amber} />
+            </>
+          )}
+          <div style={{ marginTop: 8, padding: 8, background: `${COLORS.simulated}10`, borderRadius: 0, border: `1px solid ${COLORS.simulated}20` }}>
+            <p style={{ fontSize: 10, color: COLORS.simulated, margin: 0, lineHeight: 1.5 }}>
+              ⚠ Los datos de salida del aire son simulados. En el ensayo real, el MAS proporcionará las mediciones del termopar e higrómetro a la salida del serpentín.
+            </p>
+          </div>
+        </SectionCard>
+
+        {/* F15 - Rentabilidad */}
+        <SectionCard title="F15 · Inecuación de Rentabilidad" subtitle="Energía consumida vs 540 Kcal/l ahorradas" accentColor={COLORS.green}>
+          <MetricRow label="Potencia bomba" value={datos.potenciaBomba.toFixed(0)} unit="W" tag="sim" />
+          <MetricRow label="Agua producida (1h)" value={r.litrosProducidos} unit="l" tag="sim" />
+          <div style={{ height: 8 }} />
+          <MetricRow label="Energía consumida" value={r.energiaConsumida} unit="Wh" />
+          <MetricRow label="Energía ahorrada" value={r.energiaAhorrada} unit="Wh" highlight />
+          <MetricRow label="Ratio eficiencia" value={r.ratioEficiencia} unit="×" highlight />
+          <MiniBar value={Math.min(r.ratioEficiencia, 20)} max={20} color={r.flagRentable ? COLORS.green : COLORS.red} />
+          <FlagIndicator active={r.flagRentable} label="Consumida < Ahorrada (tesis patente)" />
+          <div style={{ marginTop: 4, padding: 8, background: `${COLORS.greenDim}40`, borderRadius: 0 }}>
+            <p style={{ fontSize: 10, color: COLORS.green, margin: 0 }}>
+              Referencia patente: Q = 540 Kcal/l · Métodos convencionales: &gt;500 Kcal/l
+            </p>
+          </div>
+        </SectionCard>
+
+        {/* F06 - Auditoría Ecológica */}
+        <SectionCard title="F06 · Auditoría Ecológica y Operativa" subtitle="Tres verificaciones continuas" accentColor="#34d399">
+          <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>VERIFICACIÓN 1 — Huella térmica marina</div>
+          <MetricRow label="T captación" value={datos.tempAguaFria.toFixed(2)} unit="°C" tag="sim" />
+          <MetricRow label="T retorno" value={datos.tempAguaRetorno.toFixed(2)} unit="°C" tag="sim" />
+          <MetricRow label="Δ térmico" value={r.deltaTermico} unit="°C" />
+          <FlagIndicator active={r.flagHuellaNula} label="Δ ≤ 0.5°C (huella nula)" />
+
+          <div style={{ height: 6 }} />
+          <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>VERIFICACIÓN 2 — Ausencia de efluentes</div>
+          <FlagIndicator active={r.flagEfluentes} label="Sin residuos (por diseño del sistema)" />
+
+          <div style={{ height: 6 }} />
+          <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>VERIFICACIÓN 3 — Condición de operabilidad</div>
+          <MetricRow label="Punto de rocío" value={r.puntoRocio} unit="°C" />
+          <MetricRow label="T agua fría" value={datos.tempAguaFria.toFixed(1)} unit="°C" tag="sim" />
+          <MetricRow label="Margen" value={r.margenOperabilidad} unit="°C" highlight />
+          <FlagIndicator active={r.flagOperable} label="T_rocío > T_agua (sistema funcional)" />
+        </SectionCard>
+
+        {/* F5b - Datos espacio-temporales */}
+        <SectionCard title="F5b · BD Espacio-Temporal Marina" subtitle="Registro de variables de profundidad" accentColor="#0ea5e9">
+          <MetricRow label="Profundidad captación" value={50.0} unit="m" tag="sim" />
+          <MetricRow label="Latitud" value="38.3453" unit="°N" tag="real" />
+          <MetricRow label="Longitud" value="-0.4831" unit="°E" tag="real" />
+          <MetricRow label="T agua captación" value={datos.tempAguaFria.toFixed(2)} unit="°C" tag="sim" />
+          <MetricRow label="T agua retorno" value={datos.tempAguaRetorno.toFixed(2)} unit="°C" tag="sim" />
+          <div style={{ marginTop: 8, padding: 8, background: `${COLORS.accent}10`, borderRadius: 0, border: `1px solid ${COLORS.accent}20` }}>
+            <p style={{ fontSize: 10, color: COLORS.accent, margin: 0, lineHeight: 1.5 }}>
+              Este registro alimenta la cartografía termológica de yacimientos de agua fría contemplada en las actividades de I+D+i de DewCore Engineering.
+            </p>
+          </div>
+        </SectionCard>
+
+        {/* Flags Summary */}
+        <SectionCard title="Estado Global" subtitle="Resumen de flags del instante" accentColor={allFlags ? COLORS.green : COLORS.red}>
+          <FlagIndicator active={r.flagRentable} label="F15 — Rentabilidad energética" />
+          <FlagIndicator active={r.flagHuellaNula} label="F06.1 — Huella térmica nula" />
+          <FlagIndicator active={r.flagEfluentes} label="F06.2 — Ausencia de efluentes" />
+          <FlagIndicator active={r.flagOperable} label="F06.3 — Condición de operabilidad" />
+          <div style={{
+            marginTop: 10, padding: 10, textAlign: "center", borderRadius: 0,
+            background: allFlags ? `${COLORS.green}15` : `${COLORS.red}15`,
+            border: `1px solid ${allFlags ? COLORS.green : COLORS.red}30`,
+          }}>
+            <span style={{
+              fontSize: 13, fontWeight: 800, letterSpacing: "0.05em",
+              color: allFlags ? COLORS.green : COLORS.red,
+            }}>
+              {allFlags ? "✓ TODOS LOS FLAGS ACTIVOS" : "✗ ALGÚN FLAG INACTIVO"}
+            </span>
+          </div>
+
+          {/* Mini sparkline of condensable history */}
+          {history.length > 2 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4 }}>Agua condensable (g/m³) — últimas {history.length} muestras</div>
+              <svg viewBox={`0 0 ${history.length * 4} 40`} style={{ width: "100%", height: 40 }}>
+                <polyline
+                  fill="none" stroke={COLORS.accent} strokeWidth="1.5"
+                  points={history.map((h, i) => `${i * 4},${40 - (h.condensable / 8) * 40}`).join(" ")}
+                />
+              </svg>
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Footer */}
+      <div style={{
+        marginTop: 16, padding: "10px 0",
+        borderTop: `1px solid ${COLORS.cardBorder}`,
+        display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8,
+      }}>
+        <span style={{ fontSize: 10, color: COLORS.textMuted }}>
+          MLT v2.0 · Calibrado contra Isla de Alborán (Memoria Ports 4.0)
+        </span>
+        <span style={{ fontSize: 10, color: COLORS.textMuted }}>
+          © DewCore Engineering · TFG · Universidad de Alicante 2025-26
+        </span>
+      </div>
+
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        input[type=range] { height: 4px; }
+      `}</style>
+    </div>
+  );
+}
