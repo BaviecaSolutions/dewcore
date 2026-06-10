@@ -54,7 +54,16 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+backend/data/
+
+# Build outputs
+dist/
+frontend/dist/
+backend/dist/
 
 # Cache
 .cache/
 .pytest_cache/
+
+# Vite
+.vite/

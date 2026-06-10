@@ -1,0 +1,14 @@
+{
+  "name": "@dewcore/shared",
+  "version": "1.0.0",
+  "description": "Shared constants and calculation engine for DewCore validation system",
+  "type": "module",
+  "main": "constants.js",
+  "exports": {
+    "./constants": "./constants.js",
+    "./mlt-engine": "./mlt-engine.js"
+  },
+  "keywords": ["dewcore", "thermodynamics", "shared"],
+  "author": "DewCore Engineering",
+  "license": "MIT"
+}

@@ -1,394 +1,351 @@
-# 🌊 Proyecto DewCore — Sistema de Condensación Atmosférica
+# DewCore Validation System
 
-**TFG Universidad de Alicante 2025-26**
-**Patente ES-3046193-A1**
-**Condensador Atmosférico para Producción de Agua Dulce**
-
----
-
-## 📋 Descripción del Proyecto
-
-Sistema innovador de producción de agua dulce mediante condensación atmosférica controlada, utilizando agua de mar profunda como refrigerante natural. El proyecto incluye validación científica del modelo termodinámico y análisis de viabilidad económica.
+**TFG (Final Degree Project) — Cyber-Physical Validation System**
+**Technology**: Atmospheric Water Condensation (Patent ES-3046193-A1)
+**Methodology**: Mayéutica (Formal Causal Design)
+**University**: Universidad de Alicante (2025-26)
 
 ---
 
-## 🏗️ Arquitectura del Sistema (7 Módulos Canónicos)
+## 📋 Overview
 
-### **Módulos Implementados** ✅
+DewCore is a cyber-physical validation system for a novel atmospheric water condensation technology. The system is designed following the **Mayéutica** formal methodology, which defines 7 canonical modules with strict responsibility boundaries.
 
-| Módulo | Estado | Puerto | Descripción |
-|--------|--------|--------|-------------|
-| **MLT** | ✅ Funcionando | 5174 | Dashboard científico (validación termodinámica) |
-| **CMA** | ✅ Funcionando | 5175 | Dashboard ejecutivo (análisis económico + RBAC) |
+This repository implements:
+- **Real-time thermodynamic validation** (dew point, absolute humidity, condensable water, energy balance)
+- **Economic audit** (cost/liter, ROI, competitiveness vs desalination)
+- **Ecological audit** (zero thermal footprint, no effluents, energy rentability)
+- **Immutable data custody** (SQLite append-only database for TRL 5 traceability)
+- **Dual-view dashboard** (scientific + executive) with RBAC
 
-### **Módulos Futuros** 🔄
-
-| Módulo | Estado | Descripción |
-|--------|--------|-------------|
-| **MOE** | 🔄 Pendiente | Hardware: Sensores IoT (temperatura, humedad, presión, caudal) |
-| **MAS** | 🔄 Pendiente | Backend: Adquisición y validación de señales del MOE |
-| **MID** | ⚠️ Simulado | Backend: **Integración, normalización y distribución de datos** (cerebro del sistema) |
-| **MPT** | 🔄 Pendiente | Base de datos: TimescaleDB para series temporales |
-| **MCD** | 🔄 Pendiente | Service: Generación automática de documentos PDF/Excel |
+**Current state**: Simulation mode (TRL 3-4). Physical sensors will replace `SimulatorAdapter` for TRL 5+ validation.
 
 ---
 
-## 📊 Dashboards Implementados
+## 🏗️ The 7 Canonical Modules (Mayéutica)
 
-### MLT Dashboard (Módulo Lógico-Termodinámico)
+The Mayéutica methodology defines 7 modules with strict responsibilities:
 
-**Propósito**: Validación científica del modelo termodinámico
+| Module | Full Name | Responsibility | Implementation |
+|--------|-----------|----------------|----------------|
+| **MOE** | Módulo de Orquestación de Ensayo | Experiment director: start/stop/pause cycles, monitor module health, log incidents | [backend/modules/moe/](backend/modules/moe/) |
+| **MAS** | Módulo de Adquisición Sensorial | Physical perception: translate continuous magnitudes into digital signals. Uses Adapter pattern for hardware abstraction | [backend/modules/mas/](backend/modules/mas/) |
+| **MID** | Módulo de Ingesta y Discretización | Normalization funnel: calibration factors, temporal sync (UTC), geographic coordinates, unit conversion. **NOTHING ELSE**. | [backend/modules/mid/](backend/modules/mid/) |
+| **MLT** | Módulo Lógico-Termodinámico | Analytical brain: runs patent formulas (dew point, absolute humidity, condensable water, energy balance, ecological audit). **Pure computation, NO UI**. | [backend/modules/mlt/](backend/modules/mlt/) + [shared/mlt-engine.js](shared/mlt-engine.js) |
+| **MPT** | Módulo de Persistencia Trazable | Immutable data custody: SQLite append-only. **No UPDATE, no DELETE**. | [backend/modules/mpt/](backend/modules/mpt/) |
+| **CMA** | Cuadro de Mando Analítico | Human interface: scientific view + executive view + RBAC. **The ONLY frontend**. | [frontend/](frontend/) |
+| **MCD** | Módulo de Certificación y Documentación | Document generation (TRL 5 verification acts, Ports 4.0 reports). **Placeholder for now**. | [backend/modules/mcd/](backend/modules/mcd/) |
 
-**Características**:
-- 4 KPIs científicos: Producción (l/h), Ratio Eficiencia, Punto Rocío (°C), % Acierto Modelo
-- Gráfico 1: Validación Modelo (Teórico Magnus-Tetens vs Empírico sensores)
-- Gráfico 2: Flags de Auditoría (RENTABLE, ECOLÓGICO, EFLUENTES, OPERABLE)
-- 3 Tarjetas de datos: Condiciones Ambientales, Rendimiento, Validación
-- Acceso: **Público** (sin autenticación)
+---
 
-**Usuarios objetivo**: Ingenieros, investigadores, equipo técnico
+## 🔄 Architecture & Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       DATA FLOW PIPELINE                        │
+└─────────────────────────────────────────────────────────────────┘
+
+   MOE (tick) ──controls──> MAS ──raw data──> MID ──normalized──> MLT ──results──> MPT (persist)
+  (Orchestrator)          (Sensors)      (Normalizer)       (Engine)                (Database)
+                                                                                          │
+                                                                                          └──> CMA
+                                                                                         (WebSocket)
+```
+
+### Module Interactions
+
+1. **MOE** emits `tick` events every 1 second (adjustable speed)
+2. **MAS** acquires raw sensor data at the current circadian hour
+3. **MID** normalizes, calibrates, validates, and stamps with UTC + GPS coordinates
+4. **MLT** runs thermodynamic + economic calculations (from `@dewcore/shared/mlt-engine`)
+5. **MPT** persists to SQLite (append-only, no updates/deletes)
+6. **CMA** receives data via WebSocket and renders scientific/executive views
+
+---
+
+## 📦 Project Structure
+
+```
+dewcore-validacion/
+├── package.json                    # npm workspaces root
+├── mlt_core.py                     # Python reference implementation (UNTOUCHED)
+├── README.md                       # This file
+│
+├── shared/                         # Shared code (@dewcore/shared)
+│   ├── package.json
+│   ├── constants.js                # Physical constants + color palette + economics + RBAC
+│   ├── mlt-engine.js               # Thermodynamic + economic formulas (SINGLE SOURCE OF TRUTH)
+│   └── mlt-engine.test.js          # Calibration tests (verified against mlt_core.py)
+│
+├── backend/                        # Node.js backend (@dewcore/backend)
+│   ├── package.json
+│   ├── index.js                    # HTTP + WebSocket server
+│   ├── pipeline.js                 # Orchestrates all modules (MAS→MID→MLT→MPT)
+│   ├── modules/
+│   │   ├── moe/orchestrator.js     # ExperimentOrchestrator class
+│   │   ├── mas/
+│   │   │   ├── sensor-adapter.js   # Abstract adapter interface
+│   │   │   └── simulator-adapter.js# SimulatorAdapter (current simulation mode)
+│   │   ├── mid/normalizer.js       # Normalizer class
+│   │   ├── mlt/engine.js           # MLTEngine wrapper (imports @dewcore/shared/mlt-engine)
+│   │   ├── mpt/
+│   │   │   ├── database.js         # MPTDatabase class
+│   │   │   └── schema.sql          # SQLite schema (CREATE TABLE + triggers)
+│   │   └── mcd/placeholder.js      # MCD not implemented yet
+│   └── data/                       # SQLite database files (gitignored)
+│
+└── frontend/                       # React frontend (@dewcore/frontend)
+    ├── package.json
+    ├── vite.config.js
+    ├── index.html
+    └── src/
+        ├── main.jsx
+        ├── App.jsx                 # Auth gate + view router
+        ├── hooks/useBackendStream.js # WebSocket hook
+        └── views/
+            ├── ScientificView.jsx  # Thermodynamic validation dashboard
+            └── ExecutiveView.jsx   # Business metrics dashboard
+```
+
+---
+
+## 🚀 Installation & Usage
+
+### Prerequisites
+
+- **Node.js** 18+ (for ES modules + `node:test`)
+- **npm** 8+
+
+### Install Dependencies
 
 ```bash
-cd mlt-dashboard
+# Install all workspaces
 npm install
-npm run dev  # http://localhost:5174
 ```
 
----
-
-### CMA Dashboard (Cuadro de Mando Analítico)
-
-**Propósito**: Análisis de viabilidad económica para inversores
-
-**Características**:
-- 4 KPIs ejecutivos: Producción Diaria (l/día), Coste/Litro (€/l), Beneficio Anual (€/año), ROI (años)
-- Gráfico 1: Producción con Proyección Realista (24h con factor circadiano)
-- Gráfico 2: Análisis Económico (Ingresos vs Costes)
-- Gráfico 3: Competitividad (vs Desalación €0.60/l)
-- 3 Tarjetas económicas: Ingresos, Costes, Rentabilidad (solo Auditor)
-- Exportación CSV de datos históricos (solo Auditor)
-- Acceso: **RBAC** con 2 roles
-
-**RBAC (Roles y Permisos)**:
-
-| Rol | Email | Contraseña | Permisos |
-|-----|-------|------------|----------|
-| **Observer** | `observer@dewcore.com` | `observer123` | Solo KPIs en tiempo real (sin histórico, sin export) |
-| **Auditor** | `auditor@dewcore.com` | `auditor123` | Acceso completo (histórico + export + detalles económicos) |
-
-**Usuarios objetivo**: Inversores, directivos, auditores financieros
+### Run Backend
 
 ```bash
-cd cma-dashboard
-npm install
-npm run dev  # http://localhost:5175
+npm run dev:backend
 ```
+
+Backend starts on `http://localhost:3000` (WebSocket: `ws://localhost:3000`)
+
+### Run Frontend
+
+In a separate terminal:
+
+```bash
+npm run dev:frontend
+```
+
+Frontend starts on `http://localhost:5173`
+
+### Access the Dashboard
+
+1. Open `http://localhost:5173`
+2. Login with:
+   - **Auditor**: `auditor` / `auditor123` (full access: scientific + executive views)
+   - **Observer**: `observer` / `observer123` (read-only: executive KPIs only)
+3. Press **Start** to begin the experiment
+4. Watch real-time data flowing from backend to frontend via WebSocket
 
 ---
 
-## 🔄 Flujo de Datos (Arquitectura Completa)
+## 🧪 Testing
 
-### **Entorno Actual: Simulación**
+### Run Calibration Tests
 
-```
-┌──────────────────────────────────────────────────┐
-│  dataGenerator.js                                │
-│  └─ Simula MOE + MAS + MID (ciclo circadiano)   │
-└──────────────┬───────────────────────────────────┘
-               │
-               ├──→ MLT Dashboard (científico)
-               │    └─ http://localhost:5174
-               │
-               └──→ CMA Dashboard (ejecutivo)
-                    └─ http://localhost:5175
+```bash
+npm test
 ```
 
-### **Entorno Futuro: Producción Real**
+This runs the calibration tests in `shared/mlt-engine.test.js`, verifying that the JavaScript implementation matches the Python reference (`mlt_core.py`).
 
-```
-[MOE] Sensores IoT (ESP32)
-   ↓ MQTT (datos brutos)
-[MAS] Backend adquisición (Node.js)
-   ↓ WebSocket (datos validados)
-[MID] ⭐ Backend integración (CEREBRO)
-   │  ├─ Normalización (calibración, interpolación)
-   │  ├─ Enriquecimiento (cálculos termodinámicos + económicos)
-   │  └─ Distribución (WebSocket + SQL + Queue)
-   ↓
-   ├──→ [MPT] TimescaleDB (persistencia)
-   ├──→ [MLT] Dashboard científico (WebSocket)
-   ├──→ [CMA] Dashboard ejecutivo (WebSocket)
-   └──→ [MCD] Queue → Generación PDF/Excel
-```
+**Expected output**: 14/14 tests pass ✅
 
-**Documentación completa**: Ver [ARQUITECTURA_FLUJO_DATOS.md](ARQUITECTURA_FLUJO_DATOS.md)
+Test cases:
+- **Agosto Alborán**: Patm=1013 hPa, HR=88%, T=21°C → Td ≈ 19°C (±0.5°C)
+- **Febrero Alborán**: Patm=1022 hPa, HR=81%, T=16°C → Td ≈ 13°C (±0.5°C)
+- **Reference**: HR=50%, T=20°C → HA ≈ 8.8 g/m³ (±0.5)
+- **Energy rentability**: energiaAhorrada > energiaConsumida → flagRentable = true
+- **Economic viability**: cost/liter < desalination price → flagCompetitivo = true
+
+All tests use real atmospheric data from Puerto de Alicante (Alborán Sea).
 
 ---
 
-## 🎨 Coherencia Visual entre Dashboards
+## 💻 Technology Stack
 
-Ambos dashboards (MLT y CMA) mantienen **coherencia visual total**:
+- **Backend**: Node.js + Express + ws (WebSocket)
+- **Frontend**: React 19 + Vite 8
+- **Database**: SQLite 3 (better-sqlite3) with append-only triggers
+- **Shared Logic**: ES modules (`@dewcore/shared`)
+- **Package Management**: npm workspaces
+- **Testing**: Node.js built-in test runner
+- **Fonts**: Red Hat Display (UI) + JetBrains Mono (monospace values)
 
-### **Tipografía**
-- **Red Hat Display**: Títulos, labels, textos (weights 400-800)
-- **JetBrains Mono + Fira Code**: Valores numéricos (monospace)
-- Fallback: Inter, system fonts
+---
 
-### **Formato Numérico**
-- KPI Cards: `value.toFixed(2)` (siempre 2 decimales)
-- MetricRow: `value.toFixed(2)` (consistente con KPIs)
-- Tamaño valor KPI: `fontSize: 32`
-- Tamaño valor MetricRow: `fontSize: 15`
+## 🎨 Visual Design
 
-### **Espaciado**
-- KPI Cards: `padding: "20px"`
-- MetricRow: `padding: "5px 0"`
-- Gap entre valor y unidad: `gap: 8`
-- Border: `borderTop: "4px solid"`
+Both views (Scientific + Executive) share the same professional design system:
 
-### **Paleta de Colores**
+### Color Palette
+
 ```javascript
-// Corporativos
-primary: "#1a6eb7"       // Azul DewCore
+// Corporate colors
+primary: "#1a6eb7"       // DewCore blue
 primaryLight: "#aadeff"
 primaryMid: "#1d90cf"
 
-// Estados
-success: "#059669"       // Verde esmeralda
-error: "#dc2626"         // Rojo
-warning: "#d97706"       // Ámbar
+// Status colors
+success: "#059669"       // Emerald green
+error: "#dc2626"         // Professional red
+warning: "#d97706"       // Amber
 
-// Business (solo CMA)
-revenue: "#10b981"       // Verde ingresos
-cost: "#ef4444"          // Rojo costes
-profit: "#059669"        // Verde beneficio
-loss: "#dc2626"          // Rojo pérdidas
+// Business colors (Executive view)
+revenue: "#10b981"       // Revenue green
+cost: "#ef4444"          // Cost red
+profit: "#059669"        // Profit green
 ```
+
+See [shared/constants.js](shared/constants.js) for the complete palette.
 
 ---
 
-## 💰 Constantes Económicas (CMA)
+## 🔐 RBAC (Role-Based Access Control)
 
-Configurables en [cma-dashboard/src/constants.js](cma-dashboard/src/constants.js#L52-L74):
+| Role | Username | Password | Permissions |
+|------|----------|----------|-------------|
+| **Auditor** | `auditor` | `auditor123` | Full access: scientific view + executive view + historical charts + export |
+| **Observer** | `observer` | `observer123` | Read-only: executive KPIs only (no scientific data, no export) |
+
+⚠️ **Security Note**: This is a **mock authentication system** for demonstration purposes. In production, replace with JWT + bcrypt + HTTPS.
+
+---
+
+## 📊 Economic Constants
+
+Configurable in [shared/constants.js](shared/constants.js):
 
 ```javascript
 ECONOMICS = {
-  // Precios de referencia
-  precioAguaDesalada: 0.60,        // €/litro (desalación convencional)
-  precioAguaPotable: 0.80,         // €/litro (agua comercial)
-  precioElectricidad: 0.15,        // €/kWh (tarifa industrial media)
+  // Reference prices (€)
+  precioAguaDesalada: 0.60,        // €/liter desalinated water
+  precioAguaPotable: 0.80,         // €/liter commercial water
+  precioElectricidad: 0.15,        // €/kWh industrial rate
 
-  // Costes operacionales
-  costeMantenimientoAnual: 5000,   // €/año
-  costePersonalHora: 25,           // €/hora operador
-  costeQuimicosMes: 200,           // €/mes tratamiento
+  // Operating costs
+  costeMantenimientoAnual: 5000,   // €/year maintenance
+  costeQuimicosMes: 200,           // €/month chemicals
 
-  // ROI y amortización
-  inversionInicial: 50000,         // € (instalación PT1)
-  vidaUtilAnios: 10,               // años
-  tasaDescuento: 0.05,             // 5%
+  // ROI and amortization
+  inversionInicial: 50000,         // € PT1 installation
+  vidaUtilAnios: 10,               // years useful life
+  tasaDescuento: 0.05,             // 5% discount rate
 
-  // Umbrales
+  // Thresholds
   ratioMinimoRentable: 1.0,
-  precioObjetivoLitro: 0.40,       // € para ser competitivo
-  produccionMinimaDiaria: 20,      // litros/día mínimo viable
-};
+  precioObjetivoLitro: 0.40,       // € target price to be competitive
+  produccionMinimaDiaria: 20,      // liters/day minimum viable
+}
 ```
 
 ---
 
-## 🔬 Modelo Termodinámico
+## 🧬 Thermodynamic Model
 
-El sistema utiliza **fórmulas Magnus-Tetens** para cálculos de condensación:
+The system uses **Magnus-Tetens equations** for condensation calculations:
 
-### **Fórmulas Implementadas** (mlt_core.py → calculations.js)
+### Implemented Formulas ([shared/mlt-engine.js](shared/mlt-engine.js))
 
-1. **Presión de Saturación**:
-   ```
-   Psat(T) = 610.78 × exp((17.27 × T) / (T + 237.3))
-   ```
+1. **Saturation Pressure**: `Psat(T) = 6.1078 × exp((17.625 × T) / (243.04 + T))`
+2. **Dew Point**: Magnus-Tetens inversion
+3. **Absolute Humidity**: `HA = (Pvapor × 100) / (RV × TKelvin) × 1000` (g/m³)
+4. **Condensable Water**: `HAinlet - HAoutlet` (g/m³)
+5. **Efficiency Ratio**: `EnergySaved / EnergyConsumed`
 
-2. **Punto de Rocío**:
-   ```
-   Td = (237.3 × ln(Pvapor / 610.78)) / (17.27 - ln(Pvapor / 610.78))
-   ```
-
-3. **Humedad Absoluta**:
-   ```
-   HA = (Pvapor × 2.16679) / (T + 273.15)
-   ```
-
-4. **Agua Condensable**:
-   ```
-   Condensable = (HAentrada - HAsalida) × CaudalAire × PeriodoHoras
-   ```
-
-5. **Ratio de Eficiencia**:
-   ```
-   Ratio = ProducciónLitros / ConsumoKWh
-   ```
-
-**Explicaciones detalladas**: Ver [mlt-dashboard/RESUMEN_EJECUTIVO.md](mlt-dashboard/RESUMEN_EJECUTIVO.md#L210-L238)
+All formulas are verified against the Python reference ([mlt_core.py](mlt_core.py)) using real atmospheric data from Puerto de Alicante.
 
 ---
 
-## 📦 Stack Tecnológico
+## 🛤️ Roadmap
 
-### **Frontend (Implementado)**
-- React 19.2.5 (functional components + hooks)
-- Vite 8.0.11 (build tool, HMR)
-- CSS-in-JS (inline styles)
-- Google Fonts (Red Hat Display + JetBrains Mono)
+### ✅ Current State (TRL 3-4)
 
-### **Backend (Futuro)**
-- Node.js + Express (API REST)
-- PostgreSQL + TimescaleDB (series temporales)
-- WebSocket (Socket.io para streaming)
-- MQTT (comunicación con sensores MOE)
-- RabbitMQ (cola de eventos para MCD)
-- JWT (autenticación producción)
+- ✅ All 7 Mayéutica modules implemented
+- ✅ WebSocket real-time data pipeline
+- ✅ Dual-view CMA dashboard (scientific + executive)
+- ✅ SQLite append-only database (MPT)
+- ✅ RBAC (Auditor / Observer roles)
+- ✅ Calibration tests (14/14 passing)
 
-### **Documentación (Futuro - MCD)**
-- Puppeteer / PDFKit (generación PDF)
-- Handlebars / EJS (templates)
-- LaTeX (documentos académicos)
+### 🔄 Next Steps (TRL 5+)
 
----
-
-## 🚀 Inicio Rápido
-
-### **Requisitos**
-- Node.js >= 18.x
-- npm >= 9.x
-
-### **Instalación y Ejecución**
-
-```bash
-# Clonar repositorio
-git clone <repo-url>
-cd dewcore-validacion
-
-# MLT Dashboard (científico)
-cd mlt-dashboard
-npm install
-npm run dev  # → http://localhost:5174
-
-# En otra terminal: CMA Dashboard (ejecutivo)
-cd ../cma-dashboard
-npm install
-npm run dev  # → http://localhost:5175
-```
-
-### **Build para Producción**
-
-```bash
-# MLT
-cd mlt-dashboard
-npm run build
-npm run preview
-
-# CMA
-cd ../cma-dashboard
-npm run build
-npm run preview
-```
+- ⬜ Replace `SimulatorAdapter` with MQTT/serial adapter for real sensors
+- ⬜ Deploy to physical prototype (Puerto de Alicante)
+- ⬜ Implement MCD (document generation: TRL 5 acts, Ports 4.0 reports)
+- ⬜ Migrate historical chart components from old dashboards
+- ⬜ Export CSV functionality for Auditor role
+- ⬜ Performance optimization (database indexing, WebSocket compression)
 
 ---
 
-## 📚 Documentación Detallada
+## 🔧 Development
 
-| Documento | Descripción |
-|-----------|-------------|
-| [ARQUITECTURA_FLUJO_DATOS.md](ARQUITECTURA_FLUJO_DATOS.md) | Arquitectura completa de los 7 módulos canónicos + flujo de datos |
-| [mlt-dashboard/RESUMEN_EJECUTIVO.md](mlt-dashboard/RESUMEN_EJECUTIVO.md) | Documentación completa del MLT Dashboard |
-| [cma-dashboard/README.md](cma-dashboard/README.md) | Documentación completa del CMA Dashboard + RBAC |
-| [mlt_core.py](mlt_core.py) | Modelo termodinámico original (Python) |
+### Adding Real Sensors
 
----
+To replace simulation mode with real hardware:
 
-## 🎯 Roadmap
+1. Create a new adapter in `backend/modules/mas/` (e.g., `mqtt-adapter.js` or `serial-adapter.js`)
+2. Extend the `SensorAdapter` base class
+3. Implement the `acquire(hora)` method to read from physical sensors
+4. Replace `SimulatorAdapter` in `backend/index.js` with your new adapter
 
-### **Fase 1: Simulación y Validación** ✅ COMPLETADA
-- ✅ MLT Dashboard (validación científica)
-- ✅ CMA Dashboard (análisis económico + RBAC)
-- ✅ Documentación completa del flujo de datos
-- ✅ Coherencia visual entre dashboards
+**No other changes needed** — the pipeline is sensor-agnostic thanks to the Adapter pattern (GoF).
 
-### **Fase 2: Backend e Integración** 🔄 PRÓXIMA
-- 🔄 MID Service (backend Node.js para integración)
-- 🔄 MPT Database (TimescaleDB)
-- 🔄 WebSocket real-time streaming
-- 🔄 API REST para autenticación JWT
+### Module Development
 
-### **Fase 3: Hardware y Sensores** 🔄 FUTURA
-- 🔄 MOE (sensores IoT con ESP32)
-- 🔄 MAS (backend de adquisición MQTT)
-- 🔄 Instalación PT1 (prototipo físico)
-- 🔄 Calibración con datos reales
-
-### **Fase 4: Documentación Automatizada** 🔄 FUTURA
-- 🔄 MCD Service (generación automática PDF)
-- 🔄 Templates (Acta TRL5, Reportes Ports 4.0, Anexo TFG)
-- 🔄 Firma digital y blockchain hash
-- 🔄 Integración con email (SendGrid)
+- **Backend modules**: Edit files in `backend/modules/` and restart with `npm run dev:backend`
+- **Frontend components**: Edit files in `frontend/src/` (Vite hot-reloads automatically)
+- **Shared logic**: Edit `shared/mlt-engine.js` (used by both backend + frontend)
 
 ---
 
-## 🛡️ Seguridad
+## 📚 Documentation
 
-### **Entorno Actual (Desarrollo)**
-⚠️ **NO apto para producción**:
-- Credenciales hardcodeadas en código
-- Contraseñas en texto plano
-- Sesión en localStorage (vulnerable a XSS)
-- Sin rate limiting
-- Sin expiración de sesiones
-
-### **Recomendaciones para Producción**
-1. Backend JWT con tokens firmados
-2. Hash de contraseñas (bcrypt/scrypt)
-3. Rate limiting (express-rate-limit)
-4. HTTPS obligatorio con certificado SSL/TLS
-5. HttpOnly cookies (no localStorage)
-6. CORS configurado correctamente
-7. Expiración de sesiones (24h)
+| File | Description |
+|------|-------------|
+| [shared/mlt-engine.js](shared/mlt-engine.js) | Thermodynamic + economic calculation engine (SINGLE SOURCE OF TRUTH) |
+| [backend/pipeline.js](backend/pipeline.js) | Data flow orchestration (MAS→MID→MLT→MPT) |
+| [mlt_core.py](mlt_core.py) | Python reference implementation |
 
 ---
 
-## 🧪 Testing (Futuro)
+## 📞 Contact
 
-### **Fase 5: Calidad y Testing**
-- 🔄 Tests unitarios (Vitest): 80%+ coverage en calculations.js
-- 🔄 Tests de integración (Cypress): Flujos completos
-- 🔄 CI/CD Pipeline (GitHub Actions)
-- 🔄 Documentación técnica (JSDoc + Storybook)
+**Developer**: Carlos
+**Institution**: Universidad de Alicante
+**Project Type**: TFG (Final Degree Project)
+**Academic Year**: 2025-26
+**Company**: DewCore Engineering
+**Patent**: ES-3046193-A1 (Atmospheric Water Condensation)
 
----
-
-## 📞 Contacto y Soporte
-
-**Desarrollador**: Carlos (TFG Universidad de Alicante)
-**Empresa**: DewCore Engineering
-**Patente**: ES-3046193-A1
-**Universidad**: Universidad de Alicante
-**Año académico**: 2025-26
-
-**Dashboards**:
-- MLT (Científico): http://localhost:5174
-- CMA (Ejecutivo): http://localhost:5175
-
-**Calibración de datos**: Isla de Alborán (Memoria Ports 4.0)
+**Calibration Data**: Alborán Sea (Ports 4.0 Program)
 
 ---
 
-## 📝 Licencia
+## 📝 License
 
-Este proyecto es parte de un Trabajo Fin de Grado (TFG) de la Universidad de Alicante. Todos los derechos reservados para DewCore Engineering.
+MIT
 
-**Patente**: ES-3046193-A1 (Condensador Atmosférico)
+This project is part of a Final Degree Project (TFG) at Universidad de Alicante.
+
+**Patent**: ES-3046193-A1 — All rights reserved to DewCore Engineering.
 
 ---
 
-**Última actualización**: 9 de mayo de 2026
-**Versión**: v2.0
-**Estado**: ✅ Dashboards MLT y CMA completados y funcionando correctamente
+**Last Updated**: June 10, 2025
+**Version**: 3.0 (Restructured with Mayéutica architecture)
+**Status**: ✅ All 7 modules implemented and tested

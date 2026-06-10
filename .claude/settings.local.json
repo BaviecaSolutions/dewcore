@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(copy:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: DewCore Validation System\n\nComplete MLT monitoring and validation system including:\n- MLT Dashboard (React + Vite)\n- CMA Dashboard (Business metrics)\n- MID Service (Node.js backend)\n- Python core validation logic\n- Architecture documentation\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(node --test:*)",
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(timeout 5 npm run dev:backend:*)",
+      "Bash(timeout 10 npm run dev:backend:*)",
+      "Bash(timeout 3 npm run dev:backend:*)"
     ],
     "deny": [],
     "ask": []
